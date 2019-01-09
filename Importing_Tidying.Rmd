@@ -5,94 +5,78 @@ date: "5/24/2018"
 output: github_document
 --- 
 
-```{r installing packages}
+## Data import
 
+```{r installing packages}
 library(rgdal)
-library(readr)
-library(dplyr)
-library(tidyr)
 library(stringr)
 library(lubridate)
 library(raster)
-
-
-
+library(tidyverse)
 ```
 
-```{r parameters}
-
-input_path = '/home/aatill/MME_Climate_Change_Research/Input_Data/'
-
+```{r load data}
+setwd('../data/')
+MME <-read_csv("Fish Kill Data Updated 10_24_2018.csv")
+thermal <-read_csv("thermal_metrics.csv")
+NHD_WBIC <-read_csv("NHD_WBIC.csv")
+thermal <- left_join(thermal, NHD_WBIC, by = "site_id")
 ```
 
 
+## Preliminary cleaning
 
-
-
-```{r uploading and editing MME data}
-setwd(input_path)
-
-MME_raw <-read.csv("Fish Kill Data Updated 10_24_2018.csv")
-
-MME_filtered <- MME_raw %>%
+```{r}
+MME <- MME %>%
   filter(Min.Kill.Size!="Excludable") %>%
-  dplyr::select(-contains('County'), -contains('Station.Name'), -contains('Cause.Desc'), -contains('Site.Seq.No'), -contains('Fishkill.Inv.Seq.No'), - contains('Location.QA.Comment'), -contains('Activity.Desc'), -contains('Recommended.Action.Desc'), -contains('Fish.Kill.Comment'), -contains('Live.Fish.Desc')) %>%
+  dplyr::select(-contains('County'), 
+                -contains('Station.Name'),
+                -contains('Cause.Desc'),
+                -contains('Site.Seq.No'),
+                -contains('Fishkill.Inv.Seq.No'),
+                -contains('Location.QA.Comment'),
+                -contains('Activity.Desc'),
+                -contains('Recommended.Action.Desc'), 
+                -contains('Fish.Kill.Comment'), 
+                -contains('Live.Fish.Desc')) %>%
   mutate(Month = Investigation.Start.Month) %>%
   dplyr::select(-contains('Investigation.Start.Month'))
 
-```
-
-
-
-
-```{r uploading Thermal/NHD data and transforming Thermal}
-setwd(input_path)
-
-
-Thermal_Metrics <-read.csv("thermal_metrics.csv") 
-
-
-NHD_WBIC <-read.csv("NHD_WBIC.csv")
-
-Thermal_Metrics<- merge(Thermal_Metrics, NHD_WBIC) 
-```
-
-
-
-
-```{r tidying Thermal data}
-Thermal_Tidy <- Thermal_Metrics%>%
+t3 <- thermal %>%
   dplyr::select(-contains('jas')) %>%
-  gather(key="type", value="temperature", starts_with('mean_surf_'),starts_with('mean_bot_'), starts_with('max_surf_'), starts_with('max_bot_')) %>%
-  separate(type, into=c('metric', 'depth', 'Month'), sep='_')
-  
-  
-Thermal_Tidy$Month <- str_to_title((Thermal_Tidy$Month)) 
+  gather(key="type", value="temperature", 
+         starts_with('mean_surf_'),
+         starts_with('mean_bot_'), 
+         starts_with('max_surf_'), 
+         starts_with('max_bot_')) %>%
+  separate(type, into=c('metric', 'depth', 'Month'), sep='_') %>%
+  arrange(site_id, Year, Month) %>%
+  dplyr::select(site_id, Year, Month, everything())
 
-
-  
-
+thermal$Month <- str_to_title((thermal$Month)) 
 ```
+
+### Questions
+1. It looks like the WBIC is NA for a good number of the lakes. Do we know if these
+are zeros or missing? Are we treating them as zeros or missing? (I'm guessing we're
+treating them as zeros, which seems like the best we can do.)
+
+
+## Merging MME with thermal
 
 ```{r combining the datasets limited}
-
 MME_With_Thermal <- merge(MME_filtered,Thermal_Tidy, all = FALSE) 
 
 MME_With_Thermal <- distinct(MME_With_Thermal)
-
 ```
 
 ```{r full combined_data}
-
-
 combined_data <-merge(MME_With_Thermal,Thermal_Tidy, all = TRUE) 
 
 combined_data <- distinct(combined_data)
-
 ```
 
 ```{r setting up MME distinction and making dates}
-
 combined_data$MME <-as.factor(ifelse(is.na(combined_data$Min.Kill.Size), 0, 1))
 
 combined_data$Date <- make_date(year=combined_data$Year, month = combined_data$Month)
@@ -101,15 +85,11 @@ combined_data$Summerkill <- ifelse(combined_data$Cause.Category.4 == 'SUMMERKILL
 combined_data$winterkill <- ifelse(combined_data$Cause.Category.4 == 'WINTERKILL' & !is.na(combined_data$Cause.Category.4), 1, 0)
 combined_data$Infection <- ifelse(combined_data$Cause.Category.4 == 'INFECTIOUS AGENT'& !is.na(combined_data$Cause.Category.4), 1, 0)
 combined_data$Anthropogenic <- ifelse(combined_data$Cause.Category.4 == 'ANTHROPOGENIC CONDITION'& !is.na(combined_data$Cause.Category.4), 1, 0)
-
-
 ```
 
 ```{r creating restriction and zscores in combined_data_restricted}
-
 combined_data_restricted <-combined_data%>%
   filter(Year>2003& Date < '2014-05-01')
-
 
 combined_data_restricted$zscore_peak_temp <- (combined_data_restricted$peak_temp - ave(combined_data_restricted$peak_temp,combined_data_restricted$site_id)) / sd(combined_data_restricted$peak_temp)
 
@@ -117,13 +97,9 @@ combined_data_restricted<- combined_data_restricted %>%
   group_by(metric, depth, Month) %>%
   mutate(zscore_temp = (temperature - ave(temperature, site_id))/ sd(temperature)) %>%
   ungroup(metric, depth, Month)
-
-
-
 ```
 
 ```{r functions for accessing combined_data_restricted}
-
 mean_surf <- function(data) {
   data %>%
     filter(metric=='mean', depth=='surf')
@@ -142,9 +118,7 @@ max_bot <- function(data) {
 }
 ```
 
-
 ```{r tidying for main data pre spatial prt 1}
-
 main_data_spread <- combined_data_restricted %>%
   mutate(type = paste(combined_data_restricted$metric,'_', combined_data_restricted$depth, sep = '')) %>%
   mutate(typeZ = paste(type, 'Z', sep = '')) %>%
@@ -152,11 +126,9 @@ main_data_spread <- combined_data_restricted %>%
   distinct() %>%
   spread(key = type, value = temperature) %>%
   spread(key = typeZ, value = zscore_temp)
-
 ```
 
 ```{r  tidying for main data pre spatial prt 2}
-
 main_data_no_spatial <- main_data_spread %>%
   group_by(WBIC, site_id, Month, Year, peak_temp) %>%
   summarise(MME = max(as.numeric(MME))-1, Ice_Duration = mean(ice_duration_days, na.rm = TRUE), Schmidt = mean(schmidt_daily_annual_sum, na.rm = TRUE), Variance_After_Ice_30 = mean(coef_var_0.30, na.rm = TRUE), Variance_After_Ice_60 = mean(coef_var_30.60, na.rm = TRUE), Cumulative_Above_0 = mean(gdd_wtr_0c, na.rm = TRUE), Cumulative_Above_5 = mean(gdd_wtr_5c, na.rm = TRUE), Cumulative_Above_10 = mean(gdd_wtr_10c, na.rm = TRUE), Mean_Surf_Temp = max(mean_surf, na.rm = TRUE), Max_Surf_Temp = max(max_surf, na.rm = TRUE), Mean_Bot_Temp = max(mean_bot, na.rm = TRUE), Max_Bot_Temp = max(max_bot, na.rm = TRUE), Mean_Surf_Zscore = max(mean_surfZ, na.rm = TRUE), Max_Surf_Zscore = max(max_surfZ, na.rm = TRUE), Mean_Bot_Zscore = max(mean_botZ, na.rm = TRUE), Max_Bot_Zscore = max(max_botZ, na.rm = TRUE), Summerkill = max(Summerkill, na.rm = TRUE), Winterkill = max(winterkill, na.rm = TRUE), Infection = max(Infection, na.rm = TRUE), Anthropogenic = max(Anthropogenic, na.rm = TRUE)) %>%
@@ -164,7 +136,6 @@ main_data_no_spatial <- main_data_spread %>%
 ```
 
 ```{r main data additional variables}
-
 main_data_no_spatial$layer_dif <- main_data_no_spatial$Mean_Surf_Temp - main_data_no_spatial$Mean_Bot_Temp
 main_data_no_spatial$quadratic_temp <- main_data_no_spatial$Mean_Surf_Temp^2 
 main_data_no_spatial$Spring <- ifelse(main_data_no_spatial$Month == 'Mar' | main_data_no_spatial$Month == 'Apr' | main_data_no_spatial$Month == 'May', 1, 0)
@@ -176,9 +147,7 @@ main_data_no_spatial$Spring <- ifelse(main_data_no_spatial$Month == 'Mar' | main
 #MAPPING DATA
 
 ```{r importing spatial data}
-
 setwd(input_path)
-
 
 dsn <- "lake_shapes"
 ogrListLayers(dsn)
@@ -187,16 +156,12 @@ spatial <- readOGR(dsn, layer = 'model_lakes')
 ```
 
 ```{r making data frames from spatial data}
-
 spatial_frame <- cbind(as.data.frame(spatial), as.data.frame(coordinates(spatial)))
-
 ```
 
 
 ```{r Merging with main data}
-
 main_data <- merge(spatial_frame, main_data_no_spatial, all = FALSE)
-
 ```
 
 
@@ -262,11 +227,11 @@ census_w_frame <- cbind(census_w_pop, census_w_coords)
 
 ```
 
-``{r}
+```{r}
 ggmap(Wisconsin_map) +
   geom_point(census_w_frame, aes(x = V1, y = V2))
 
-``
+```
 
 
 ```{r limiting size of coordinates}
@@ -405,7 +370,7 @@ future_data_census <- merge(future_data, census_w_frame_summary, full = TRUE)
 
 
 
-``{r}
+```{r}
 
 
   
@@ -439,7 +404,7 @@ tidy_snow <- function(data_input, year, month) {
 ```
 
 
-``{r}
+```{r}
 
 setwd('/home/aatill/Till_Thesis/Summer_Research_Work/MME_Climate_Change_Research/Input_Data/Prism Data/PRISM_Precip/')
 
