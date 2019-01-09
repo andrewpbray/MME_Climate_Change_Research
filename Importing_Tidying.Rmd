@@ -20,11 +20,15 @@ setwd('../data/')
 MME <-read_csv("Fish Kill Data Updated 10_24_2018.csv")
 thermal <-read_csv("thermal_metrics.csv")
 NHD_WBIC <-read_csv("NHD_WBIC.csv")
-thermal <- left_join(thermal, NHD_WBIC, by = "site_id")
+MME <- left_join(MME, NHD_WBIC, by = "WBIC")
+
+rm(NHD_WBIC)
 ```
 
 
-## Preliminary cleaning
+## Prelimary cleaning
+
+First we strip out unneeded columns and tidy.
 
 ```{r}
 MME <- MME %>%
@@ -38,31 +42,64 @@ MME <- MME %>%
                 -contains('Activity.Desc'),
                 -contains('Recommended.Action.Desc'), 
                 -contains('Fish.Kill.Comment'), 
-                -contains('Live.Fish.Desc')) %>%
+                -contains('Live.Fish.Desc'),
+                -X1) %>%
   mutate(Month = Investigation.Start.Month) %>%
   dplyr::select(-contains('Investigation.Start.Month'))
 
-t3 <- thermal %>%
-  dplyr::select(-contains('jas')) %>%
+names(MME) <- str_to_lower(names(MME))
+```
+
+For the thermal data, we first only retain distinct `Year` X `site_id` combinations.
+In general, these were distinct, but there were a few anomolous `site_id` that
+had multiple records for each year.
+
+```{r}
+thermal <- thermal %>%
+  distinct(Year, site_id, .keep_all = TRUE)
+
+names(thermal) <- str_to_lower(names(thermal))
+```
+
+For now, we process the annual and monthly thermal data separately. This is for
+the sake of computational efficiency; they are merged later.
+
+```{r}
+thermal_annual <- thermal %>%
+  dplyr::select(-contains('jas'),
+                -starts_with('mean_surf_'),
+                -starts_with('mean_bot_'), 
+                -starts_with('max_surf_'), 
+                -starts_with('max_bot_'))
+ 
+thermal_monthly <- thermal %>%
+  dplyr::select(starts_with('mean_surf_'),
+                starts_with('mean_bot_'), 
+                starts_with('max_surf_'), 
+                starts_with('max_bot_'),
+                -contains('jas'),
+                year, site_id) %>%
   gather(key="type", value="temperature", 
          starts_with('mean_surf_'),
          starts_with('mean_bot_'), 
          starts_with('max_surf_'), 
          starts_with('max_bot_')) %>%
-  separate(type, into=c('metric', 'depth', 'Month'), sep='_') %>%
-  arrange(site_id, Year, Month) %>%
-  dplyr::select(site_id, Year, Month, everything())
+  separate(type, into=c('metric', 'depth', 'month'), sep='_')  %>%
+  unite(metric, metric, depth) %>%
+  spread(metric, temperature) %>%
+  arrange(site_id, year, month)
 
-thermal$Month <- str_to_title((thermal$Month)) 
+rm(thermal)
 ```
-
-### Questions
-1. It looks like the WBIC is NA for a good number of the lakes. Do we know if these
-are zeros or missing? Are we treating them as zeros or missing? (I'm guessing we're
-treating them as zeros, which seems like the best we can do.)
 
 
 ## Merging MME with thermal
+
+
+```{r}
+
+```
+
 
 ```{r combining the datasets limited}
 MME_With_Thermal <- merge(MME_filtered,Thermal_Tidy, all = FALSE) 
