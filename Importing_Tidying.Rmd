@@ -20,7 +20,7 @@ setwd('../data/')
 MME <-read_csv("Fish Kill Data Updated 10_24_2018.csv")
 thermal <-read_csv("thermal_metrics.csv")
 NHD_WBIC <-read_csv("NHD_WBIC.csv")
-MME <- left_join(MME, NHD_WBIC, by = "WBIC")
+thermal <- left_join(thermal, NHD_WBIC, by = "site_id")
 
 rm(NHD_WBIC)
 ```
@@ -33,30 +33,25 @@ First we strip out unneeded columns and tidy.
 ```{r}
 MME <- MME %>%
   filter(Min.Kill.Size!="Excludable") %>%
-  dplyr::select(-contains('County'), 
-                -contains('Station.Name'),
-                -contains('Cause.Desc'),
-                -contains('Site.Seq.No'),
-                -contains('Fishkill.Inv.Seq.No'),
-                -contains('Location.QA.Comment'),
-                -contains('Activity.Desc'),
-                -contains('Recommended.Action.Desc'), 
-                -contains('Fish.Kill.Comment'), 
-                -contains('Live.Fish.Desc'),
-                -X1) %>%
-  mutate(Month = Investigation.Start.Month) %>%
-  dplyr::select(-contains('Investigation.Start.Month'))
+  dplyr::select(WBIC,
+                Year,
+                Cause.Category, Cause.Type,
+                Investigation.Start.Month,
+                Fishkill.Inv.Seq.No,
+                Min.Kill.Size) %>%
+  rename(Month = Investigation.Start.Month)
 
 names(MME) <- str_to_lower(names(MME))
 ```
 
-For the thermal data, we first only retain distinct `Year` X `site_id` combinations.
-In general, these were distinct, but there were a few anomolous `site_id` that
+For the thermal data, we first only retain distinct `Year` X `WBIC` combinations.
+In general, these were distinct, but there were a few anomolous `WBIC` that
 had multiple records for each year.
 
 ```{r}
 thermal <- thermal %>%
-  distinct(Year, site_id, .keep_all = TRUE)
+  distinct(Year, WBIC, .keep_all = TRUE) %>%
+  filter(!is.na(WBIC))
 
 names(thermal) <- str_to_lower(names(thermal))
 ```
@@ -70,7 +65,8 @@ thermal_annual <- thermal %>%
                 -starts_with('mean_surf_'),
                 -starts_with('mean_bot_'), 
                 -starts_with('max_surf_'), 
-                -starts_with('max_bot_'))
+                -starts_with('max_bot_'),
+                -site_id)
  
 thermal_monthly <- thermal %>%
   dplyr::select(starts_with('mean_surf_'),
@@ -78,7 +74,7 @@ thermal_monthly <- thermal %>%
                 starts_with('max_surf_'), 
                 starts_with('max_bot_'),
                 -contains('jas'),
-                year, site_id) %>%
+                year, wbic) %>%
   gather(key="type", value="temperature", 
          starts_with('mean_surf_'),
          starts_with('mean_bot_'), 
@@ -87,7 +83,7 @@ thermal_monthly <- thermal %>%
   separate(type, into=c('metric', 'depth', 'month'), sep='_')  %>%
   unite(metric, metric, depth) %>%
   spread(metric, temperature) %>%
-  arrange(site_id, year, month)
+  arrange(wbic, year, month)
 
 rm(thermal)
 ```
@@ -95,23 +91,14 @@ rm(thermal)
 
 ## Merging MME with thermal
 
-
 ```{r}
-
+df <- thermal_monthly %>%
+  left_join(thermal_annual) %>%
+  left_join(MME)
 ```
 
 
-```{r combining the datasets limited}
-MME_With_Thermal <- merge(MME_filtered,Thermal_Tidy, all = FALSE) 
-
-MME_With_Thermal <- distinct(MME_With_Thermal)
-```
-
-```{r full combined_data}
-combined_data <-merge(MME_With_Thermal,Thermal_Tidy, all = TRUE) 
-
-combined_data <- distinct(combined_data)
-```
+## Cleaning and creating covariates for modeling
 
 ```{r setting up MME distinction and making dates}
 combined_data$MME <-as.factor(ifelse(is.na(combined_data$Min.Kill.Size), 0, 1))
@@ -123,6 +110,8 @@ combined_data$winterkill <- ifelse(combined_data$Cause.Category.4 == 'WINTERKILL
 combined_data$Infection <- ifelse(combined_data$Cause.Category.4 == 'INFECTIOUS AGENT'& !is.na(combined_data$Cause.Category.4), 1, 0)
 combined_data$Anthropogenic <- ifelse(combined_data$Cause.Category.4 == 'ANTHROPOGENIC CONDITION'& !is.na(combined_data$Cause.Category.4), 1, 0)
 ```
+
+**Question**: What is the difference between `Cause.Type` and `Cause.Category.4`?
 
 ```{r creating restriction and zscores in combined_data_restricted}
 combined_data_restricted <-combined_data%>%
