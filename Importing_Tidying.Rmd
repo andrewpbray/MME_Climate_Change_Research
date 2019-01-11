@@ -38,8 +38,22 @@ MME <- MME %>%
                 Cause.Category, Cause.Type,
                 Investigation.Start.Month,
                 Fishkill.Inv.Seq.No,
-                Min.Kill.Size) %>%
-  rename(Month = Investigation.Start.Month)
+                Cause.Category.4) %>%
+  rename(month = Investigation.Start.Month) %>%
+  mutate(month = as.character(fct_recode(as.factor(month),
+                                         "jan" = "Jan",
+                                         "feb" = "Feb",
+                                         "mar" = "Mar",
+                                         "apr" = "Apr",
+                                         "may" = "May",
+                                         "jun" = "Jun",
+                                         "jul" = "Jul",
+                                         "aug" = "Aug",
+                                         "sep" = "Sep",
+                                         "oct" = "Oct",
+                                         "nov" = "Nov",
+                                         "dec" = "Dec")),
+         WBIC = as.character(WBIC))
 
 names(MME) <- str_to_lower(names(MME))
 ```
@@ -49,9 +63,10 @@ In general, these were distinct, but there were a few anomolous `WBIC` that
 had multiple records for each year.
 
 ```{r}
-thermal <- thermal %>%
-  distinct(Year, WBIC, .keep_all = TRUE) %>%
-  filter(!is.na(WBIC))
+thermal <- thermal  %>%
+  filter(!is.na(WBIC)) %>%
+  mutate(WBIC = as.character(WBIC)) %>%
+  distinct(Year, WBIC, .keep_all = TRUE)
 
 names(thermal) <- str_to_lower(names(thermal))
 ```
@@ -89,16 +104,88 @@ rm(thermal)
 ```
 
 
-## Merging MME with thermal
+## Merging MME with thermal and diagnostics
 
 ```{r}
-df <- thermal_monthly %>%
-  left_join(thermal_annual) %>%
+tf <- thermal_monthly %>%
+  left_join(thermal_annual)
+```
+
+We want to ensure that all of the MMEs find their way onto a row of `tf`, so
+first some checks.
+
+```{r eval = FALSE}
+nrow(MME)
+length(unique(MME$fishkill.inv.seq.no))
+length(table(MME$wbic))
+sum(table(MME$wbic))
+```
+
+So we learn that each of the `r nrow(MME)` rows in `MME` is a unique fishkill, there
+are fewer unique lake `wbic`s because some lakes have had multiple MMEs, therefore
+are found in multiple rows.
+
+```{r}
+df <- tf %>%
   left_join(MME)
 ```
 
+Most of the new columns should be NAs because most year x month x wbic combos don't have
+MME data. Hopefully the number of non-NAs is the same as the number of MMEs.
+
+```{r eval = FALSE}
+df %>%
+  map(~sum(!is.na(.)))
+```
+
+That's an unexpected number. It's neither the total number of MMEs nor the total
+number of unique `wbic`s. We can check to see how many of the MMEs correponded
+to year x month x wbic combos that weren't unique, i.e. there were multiple MMEs
+in the same lake in the same month.
+
+```{r eval = FALSE}
+MME %>%
+  select(wbic, year, month) %>%
+  duplicated() %>%
+  sum()
+```
+
+So twelve of those MMEs were stacked up on top of others. They will be tacked on
+to the bottom of the merged df with the thermal data copied over. That's fine, but
+it still doesn't solve the problem.
+
+We can also check to see if the wbic set in `MME` is a subset of those in `tf`.
+
+```{r eval = FALSE}
+length(intersect(MME$wbic, tf$wbic))
+length(unique(MME$wbic))
+```
+
+Ah, so here is where we lose some MMEs: not all of the MMEs find matching `wbic` in the
+thermals data set. That's a bummer. We can check to see if this explains all of the
+discrepancy found in the join by doing this subsetting of MME before the join and check
+if it looks the same as if we hadn't subsetted.
+
+```{r eval = FALSE}
+match_set <- intersect(MME$wbic, tf$wbic)
+MME_shrunk <- MME %>%
+  filter(wbic %in% match_set)
+
+df2 <- tf %>%
+  left_join(MME_shrunk)
+```
+
+Yep, they're the same, so that's the explanation.
 
 ## Cleaning and creating covariates for modeling
+
+```{r}
+df <- df %>%
+  mutate(mme = ifelse(!is.na(fishkill.inv.seq.no), 0, 1),
+         date = make_date(year = year, month = month),
+         summerkill = )
+```
+
 
 ```{r setting up MME distinction and making dates}
 combined_data$MME <-as.factor(ifelse(is.na(combined_data$Min.Kill.Size), 0, 1))
