@@ -231,9 +231,10 @@ df <- df %>%
 
 # Add spatial data
 
+First the spatial covariates of the lakes.
+
 ```{r}
-dsn <- "lake_shapes"
-spatial <- readOGR(dsn, layer = 'model_lakes')
+spatial <- readOGR("lake_shapes", layer = 'model_lakes')
 spatial_df <- as_tibble(spatial) %>%
   bind_cols(as.tibble(coordinates(spatial))) %>%
   mutate(site_id = as.character(site_id)) %>%
@@ -253,54 +254,32 @@ df <- df %>%
   left_join(spatial_df, by = "wbic")
 ```
 
+Next, the 2010 census block covariates from https://www.census.gov/geo/maps-data/data/tiger-data.html
 
+```{r}
+census <- readOGR("census_data", layer = 'tabblock2010_55_pophu')
+census_df <- as_tibble(census) %>%
+  select("POP10") %>%
+  bind_cols(as_tibble(coordinates(census))) %>%
+  rename(lat = V2,
+         lon = V1)
+  
+names(census_df) <- str_to_lower(names(census_df))
+rm(census)
+```
 
+```{r}
+df <- df %>%
+  left_join(census_df, by = c("lon", "lat")) %>%
+  mutate(lon_round = round(lon, 1),
+         lat_round = round(lat, 1)) %>%
+  group_by(lon_round, lat_round) %>%
+  summarize(population = sum(pop10))
+```
 
+# above not quite working
 # DONE UP TILL HERE
 
-# Outline of wisconsin shapefile data
-
-
-
-```{r importing spatial data}
-
-setwd(input_path)
-
-
-dsn2 <- "wisconsin_outline"
-ogrListLayers(dsn2)
-spatial_w <- readOGR(dsn2, layer = 'wisco_only')
-
-```
-
-
-# Wisconsin Population Data from 2010 census data blocks
-
-https://www.census.gov/geo/maps-data/data/tiger-data.html
-
-```{r importing spatial data}
-
-setwd(input_path)
-
-
-dsn3 <- "census_data"
-ogrListLayers(dsn3)
-
-census_w <- readOGR(dsn3, layer = 'tabblock2010_55_pophu')
-```
-
-```{r}
-census_w_coords <-  as.data.frame(coordinates(census_w))
-census_w_pop <- dplyr::select(as.data.frame(census_w), 'POP10')
-census_w_frame <- cbind(census_w_pop, census_w_coords)
-
-```
-
-```{r}
-ggmap(Wisconsin_map) +
-  geom_point(census_w_frame, aes(x = V1, y = V2))
-
-```
 
 
 ```{r limiting size of coordinates}
@@ -324,6 +303,22 @@ census_w_frame_summary <- census_w_frame %>%
 ```{r}
 
 main_data_census <- merge(main_data, census_w_frame_summary, full = TRUE) 
+```
+
+
+# Outline of wisconsin shapefile data
+
+
+
+```{r importing spatial data}
+
+setwd(input_path)
+
+
+dsn2 <- "wisconsin_outline"
+ogrListLayers(dsn2)
+spatial_w <- readOGR(dsn2, layer = 'wisco_only')
+
 ```
 
 
