@@ -4,107 +4,89 @@ author: "aaron till"
 date: "5/29/2018"
 output: html_document
 ---
+
 ```{r}
 library(caret)
 library(glmnet)
 library(readxl)
-
-```
-
-```{r parameters}
-
-main_path = '/home/aatill/MME_Climate_Change_Research'
-
-
 ```
 
 ```{r}
-modeling_data <- dplyr::select(main_data_census, -FType, - FCode, - GNIS_Nm, - ReachCd, - Prmnn_I, - Year, - GNIS_ID, - site_id, - WBIC, - Winterkill, - Infection, - Anthropogenic, - MME, - Month, - Season, - Spring, - layer_dif, - quadratic_temp, - peak_temp, - long_round, - lat_round, - Ice_Duration) 
- 
+modeling_data <- dplyr::select(df,
+                               lat, lon, schmidt, variance_after_ice_30,
+                               variance_after_ice_60, cumulative_above_0,
+                               cumulative_above_5,  cumulative_above_10,
+                               max_surf, mean_bot, max_bot, mean_surf, 
+                               max_surf_z, mean_bot_z, max_bot_z, mean_surf_z, 
+                               summerkill, population)
+modeling_data <- modeling_data %>%
+  mutate(summerkill = ifelse(is.na(summerkill), 0, summerkill))
 ```
- 
- 
- 
+
+
 # Ridge regression 
 
 ```{r}
-
-x_ridge <- model.matrix(Summerkill ~ ., modeling_data) 
-
-
-y_ridge <- ifelse(modeling_data$Summerkill == 1, 1, 0)
-
+x_ridge <- model.matrix(summerkill ~ ., modeling_data) 
+y_ridge <- modeling_data$summerkill
 ```
 
 ```{r}
-
 lambdatest <- glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0)
-plot(lambdatest, xvar = 'lambda')
-
+plot.glmnet(lambdatest, xvar = 'lambda', label = TRUE)
 ```
 
 ```{r observing lambdas}
 set.seed(1234)
 
-
 # experimenting for quicker run, lambda = c(10^-5, 10^-3.5, 10^-4)
-
 ridge_regression_lambda_summer <- cv.glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0, nfolds = 3) # alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
 
 plot(ridge_regression_lambda_summer)
-
 ```
 
 ```{r making final lasso regression model}
-
 ridge_regression_model_summer <- glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0, lambda = ridge_regression_lambda_summer$lambda.1se) 
 # alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
 #use $lambda.1se instead of $lambda.min for simpler but less flexible model
 
 coef(ridge_regression_model_summer)
-
 ```
+
 
 # Lasso regression 
 
-
 ```{r}
-
-x_all <- model.matrix(Summerkill ~ . , modeling_data)
-
-y_all <- ifelse(modeling_data$Summerkill == 1, 1, 0)
-
-
+x_lasso <- model.matrix(summerkill ~ . , modeling_data)
+y_lasso <- modeling_data$summerkill == 1
 ```
 
 ```{r}
-
-lambdatest <- glmnet(x_all, y_all, family = "binomial", alpha = 1)
+lambdatest <- glmnet(x_lasso, y_lasso, family = "binomial", alpha = 1)
 plot(lambdatest, xvar = 'lambda')
- 
 ```
 
 ```{r observing lambdas}
 set.seed(1234)
 
-grid=10^seq(10,-15,length=100) # set lambda equal to for checking if more extensive lambda needed, no difference
+grid <- 10^seq(10, -15, length = 100) 
+# set lambda equal to for checking if more extensive lambda needed, no difference
 
 # for quicker, lambda = c(10^-7, 10^-5.5, 10^-4)
-
-lasso_regression_coords_lambda_summer <- cv.glmnet(x_all, y_all, family = "binomial", alpha = 1, nfolds = 3) # alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
+lasso_regression_coords_lambda_summer <- cv.glmnet(x_lasso, y_lasso, family = "binomial",
+                                                   lambda = c(10^-7, 10^-5.5, 10^-4), 
+                                                   alpha = 1, nfolds = 3)
 
 plot(lasso_regression_coords_lambda_summer)
 
 ```
 
 ```{r making final lasso regression model}
-
-lasso_regression_coords_model_summer <- glmnet(x_all, y_all, family = "binomial", alpha = 1, lambda = lasso_regression_coords_lambda_summer$lambda.1se) 
+lasso_regression_coords_model_summer <- glmnet(x_lasso, y_lasso, family = "binomial", alpha = 1, lambda = lasso_regression_coords_lambda_summer$lambda.1se) 
 # alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
 #use $lambda.1se instead of $lambda.min for simpler but less flexible model
 
 coef(lasso_regression_coords_model_summer)
-
 ```
 
 
