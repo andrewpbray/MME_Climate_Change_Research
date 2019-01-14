@@ -198,9 +198,17 @@ spatial_df <- as_tibble(spatial) %>%
   left_join(NHD_WBIC, by = "site_id") %>%
   filter(!is.na(WBIC)) %>%
   rename(lat = V2,
-         lon = V1)
+         lon = V1) %>%
+  select(lat, lon, WBIC)
 
 names(spatial_df) <- str_to_lower(names(spatial_df))
+
+# Represent each lake by just one lat/lon
+spatial_df <- spatial_df %>%
+  group_by(wbic) %>%
+  summarize(lon = mean(lon),
+            lat = mean(lat))
+
 rm(spatial)
 ```
 
@@ -230,7 +238,187 @@ rm(census)
 ```
 
 ```{r}
+d2 <- df %>%
+  mutate(lon_round = round(lon, 1),
+         lat_round = round(lat, 1)) %>%
+  left_join(census_df, by = c("lon_round", "lat_round"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# Future Data
+
+```{r}
+thermal_future <- read_tsv('ACCESS_thermal_metrics.tsv')
+thermal <- inner_join(thermal_future, NHD_WBIC, by = "site_id")
+rm(thermal_future)
+```
+
+
+## Prelimary cleaning
+
+For the thermal data, we first only retain distinct `Year` X `WBIC` combinations.
+In general, these were distinct, but there were a few anomolous `WBIC` that
+had multiple records for each year.
+
+```{r}
+thermal <- thermal  %>%
+  filter(!is.na(WBIC)) %>%
+  distinct(year, WBIC, .keep_all = TRUE)
+
+names(thermal) <- str_to_lower(names(thermal))
+```
+
+For now, we process the annual and monthly thermal data separately. This is for
+the sake of computational efficiency; they are merged later.
+
+```{r}
+thermal_annual <- thermal %>%
+  dplyr::select(-contains('jas'),
+                -starts_with('mean_surf_'),
+                -starts_with('mean_bot_'), 
+                -starts_with('max_surf_'), 
+                -starts_with('max_bot_'),
+                -site_id)
+ 
+thermal_monthly <- thermal %>%
+  dplyr::select(starts_with('mean_surf_'),
+                starts_with('mean_bot_'), 
+                starts_with('max_surf_'), 
+                starts_with('max_bot_'),
+                -contains('jas'),
+                year, wbic) %>%
+  gather(key="type", value="temperature", 
+         starts_with('mean_surf_'),
+         starts_with('mean_bot_'), 
+         starts_with('max_surf_'), 
+         starts_with('max_bot_')) %>%
+  separate(type, into=c('metric', 'depth', 'month'), sep='_')  %>%
+  unite(metric, metric, depth) %>%
+  spread(metric, temperature) %>%
+  arrange(wbic, year, month)
+
+rm(thermal)
+```
+
+
+## Merging
+
+```{r}
+df <- thermal_monthly %>%
+  left_join(thermal_annual, by = "wbic")
+```
+
+
+
+## Cleaning and creating covariates for modeling
+
+```{r}
 df <- df %>%
+  mutate(date = ymd(paste(year, month, "15"))) %>%
+  filter(date > "2014-05-01")
+```
+
+**Question**: What is the difference between `Cause.Type` and `Cause.Category.4`?
+
+Turn each of the temperature readings into z-scores based on their deviation from 
+that lake's monthly data. Also add additional useful covariates and do some renaming.
+
+```{r}
+df <- df %>%
+  group_by(wbic, month) %>%
+  mutate(max_bot_z = scale(max_bot),
+         max_surf_z = scale(max_surf),
+         mean_bot_z = scale(mean_bot),
+         mean_surf_z = scale(mean_surf)) %>%
+  ungroup() %>%
+  mutate(layer_diff = mean_surf - mean_bot,
+         quadratic_temp = mean_surf^2,
+         season = fct_collapse(month,
+                               "winter" = "dec",
+                               "winter" = "jan",
+                               "winter" = "feb",
+                               "spring" = "mar",
+                               "spring" = "apr",
+                               "spring" = "may",
+                               "summer" = "jun",
+                               "summer" = "jul",
+                               "summer" = "aug",
+                               "fall"   = "sep",
+                               "fall"   = "oct",
+                               "fall"   = "nov")) %>%
+  rename(ice_duration = ice_duration_days,
+         schmidt = schmidt_daily_annual_sum,
+         variance_after_ice_30 = coef_var_0.30, 
+         variance_after_ice_60 = coef_var_30.60, 
+         cumulative_above_0 = gdd_wtr_0c,
+         cumulative_above_5 = gdd_wtr_5c,
+         cumulative_above_10 = gdd_wtr_10c)
+```
+
+
+# Add spatial data
+
+First the spatial covariates of the lakes.
+
+```{r}
+spatial <- readOGR("lake_shapes", layer = 'model_lakes')
+spatial_df <- as_tibble(spatial) %>%
+  bind_cols(as.tibble(coordinates(spatial))) %>%
+  mutate(site_id = as.character(site_id)) %>%
+  left_join(NHD_WBIC, by = "site_id") %>%
+  filter(!is.na(WBIC)) %>%
+  rename(lat = V2,
+         lon = V1) %>%
+  select(lat, lon, WBIC)
+
+names(spatial_df) <- str_to_lower(names(spatial_df))
+
+# Represent each lake by just one lat/lon
+spatial_df <- spatial_df %>%
+  group_by(wbic) %>%
+  summarize(lon = mean(lon),
+            lat = mean(lat))
+
+rm(spatial)
+```
+
+Merge into existing data.
+
+```{r}
+df <- df %>%
+  left_join(spatial_df, by = "wbic")
+```
+
+Next, the 2010 census block covariates from https://www.census.gov/geo/maps-data/data/tiger-data.html
+
+```{r}
+census <- readOGR("census_data", layer = 'tabblock2010_55_pophu')
+census_df <- as_tibble(census) %>%
+  select("POP10") %>%
+  bind_cols(as_tibble(coordinates(census))) %>%
+  rename(lat = V2,
+         lon = V1) %>%
+  mutate(lon_round = round(lon, 1),
+         lat_round = round(lat, 1)) %>%
+  group_by(lon_round, lat_round) %>%
+  summarize(population = sum(POP10)) %>%
+  select(lon_round, lat_round, population)
+  
+rm(census)
+```
+
+```{r}
+d2 <- df %>%
   mutate(lon_round = round(lon, 1),
          lat_round = round(lat, 1)) %>%
   left_join(census_df, by = c("lon_round", "lat_round"))
