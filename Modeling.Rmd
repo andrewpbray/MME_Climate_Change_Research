@@ -1,58 +1,69 @@
 ---
 title: "Modeling"
-author: "aaron till"
-date: "5/29/2018"
+author: "Aaron Till and Andrew Bray"
 output: html_document
 ---
 
 ```{r}
+library(tidyverse)
 library(caret)
 library(glmnet)
-library(readxl)
+library(Matrix)
+library(e1071)
+```
+
+# Model 1: Lasso Logistic
+
+## Prepare data
+
+```{r}
+setwd("../processed-data")
+historical_data <- read_csv("historical_data.csv")
 ```
 
 ```{r}
-modeling_data <- dplyr::select(df,
-                               lat, lon, schmidt, variance_after_ice_30,
-                               variance_after_ice_60, cumulative_above_0,
-                               cumulative_above_5,  cumulative_above_10,
-                               max_surf, mean_bot, max_bot, mean_surf, 
-                               max_surf_z, mean_bot_z, max_bot_z, mean_surf_z, 
-                               summerkill, population)
-modeling_data <- modeling_data %>%
-  mutate(summerkill = ifelse(is.na(summerkill), 0, summerkill))
+historical_data <- historical_data %>%
+  select(lat, lon, schmidt, variance_after_ice_30,
+         variance_after_ice_60, cumulative_above_0,
+         cumulative_above_5,  cumulative_above_10,
+         max_surf, mean_bot, max_bot, mean_surf, 
+         max_surf_z, mean_bot_z, max_bot_z, mean_surf_z, 
+         summerkill, population) %>%
+  mutate(summerkill = factor(ifelse(is.na(summerkill), 0, summerkill)))
 ```
 
 
-# Ridge regression 
+## Tune model
+
+First we must create the training and testing partitions. We begin this naively,
+taking an SRS approach instead of a moving-windows time-series approach.
 
 ```{r}
-x_ridge <- model.matrix(summerkill ~ ., modeling_data) 
-y_ridge <- modeling_data$summerkill
+set.seed(998)
+in_training <- createDataPartition(historical_data$summerkill,
+                                  p = .75, list = FALSE)
+training <- slice(historical_data, in_training)
+testing  <- slice(historical_data, -in_training)
 ```
+
+Next we fit LASSO models with many difference lambdas, utilizing a 10-fold CV
+scheme, repeated 10 times, on the training data.
 
 ```{r}
-lambdatest <- glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0)
-plot.glmnet(lambdatest, xvar = 'lambda', label = TRUE)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 10)
+
+set.seed(825)
+lasso_fit_1 <- train(summerkill ~ ., data = training, 
+                 method = "glmnet", 
+                 trControl = fitControl)
 ```
 
-```{r observing lambdas}
-set.seed(1234)
 
-# experimenting for quicker run, lambda = c(10^-5, 10^-3.5, 10^-4)
-ridge_regression_lambda_summer <- cv.glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0, nfolds = 3) # alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
 
-plot(ridge_regression_lambda_summer)
-```
 
-```{r making final lasso regression model}
-ridge_regression_model_summer <- glmnet(x_ridge, y_ridge, family = "binomial", alpha = 0, lambda = ridge_regression_lambda_summer$lambda.1se) 
-# alpha = 0 ridge, 1 for lasso, between 0 and 1 for elastic 
-#use $lambda.1se instead of $lambda.min for simpler but less flexible model
-
-coef(ridge_regression_model_summer)
-```
-
+# # THE FOLLOWING CODE HAS NOT YET BEEN REVISED
 
 # Lasso regression 
 
