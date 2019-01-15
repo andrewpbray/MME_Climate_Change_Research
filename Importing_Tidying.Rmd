@@ -12,7 +12,7 @@ output: github_document
 library(rgdal)
 library(stringr)
 library(lubridate)
-library(raster)
+#library(raster)
 library(tidyverse)
 ```
 
@@ -205,7 +205,7 @@ Next, the 2010 census block covariates from https://www.census.gov/geo/maps-data
 ```{r}
 census <- readOGR("census_data", layer = 'tabblock2010_55_pophu')
 census_df <- as_tibble(census) %>%
-  select("POP10") %>%
+  dplyr::select(POP10) %>%
   bind_cols(as_tibble(coordinates(census))) %>%
   rename(lat = V2,
          lon = V1) %>%
@@ -222,7 +222,8 @@ rm(census)
 df <- df %>%
   mutate(lon_round = round(lon, 1),
          lat_round = round(lat, 1)) %>%
-  left_join(census_df, by = c("lon_round", "lat_round"))
+  left_join(census_df, by = c("lon_round", "lat_round")) %>%
+  select(-lon_round, -lat_round)
 ```
 
 
@@ -247,7 +248,7 @@ Since the cleaning steps are identical to the above, we remove the commentary.
 ```{r}
 setwd("../data")
 thermal <- read_tsv('ACCESS_thermal_metrics.tsv') %>%
-  inner_join(thermal, NHD_WBIC, by = "site_id")
+  inner_join(NHD_WBIC, by = "site_id")
 ```
 
 ```{r}
